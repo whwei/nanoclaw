@@ -13,9 +13,13 @@ import {
   CONTAINER_TIMEOUT,
   CONTAINER_MAX_OUTPUT_SIZE,
   GROUPS_DIR,
-  DATA_DIR
+  DATA_DIR,
+  DEFAULT_LLM_PROVIDER,
+  OPENAI_API_KEY,
+  OPENAI_DEFAULT_MODEL,
+  OPENAI_BASE_URL
 } from './config.js';
-import { RegisteredGroup } from './types.js';
+import { RegisteredGroup, LLMConfig } from './types.js';
 import { validateAdditionalMounts } from './mount-security.js';
 
 const logger = pino({
@@ -42,6 +46,7 @@ export interface ContainerInput {
   chatJid: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  llm?: LLMConfig;
 }
 
 export interface ContainerOutput {
@@ -118,29 +123,47 @@ function buildVolumeMounts(group: RegisteredGroup, isMain: boolean): VolumeMount
   });
 
   // Environment file directory (workaround for Apple Container -i env var bug)
-  // Only expose specific auth variables needed by Claude Code, not the entire .env
+  // Only expose specific auth variables needed by Claude Code and OpenAI, not the entire .env
   const envDir = path.join(DATA_DIR, 'env');
   fs.mkdirSync(envDir, { recursive: true });
   const envFile = path.join(projectRoot, '.env');
+  const envVars: string[] = [];
+
+  // Always include Claude auth vars
   if (fs.existsSync(envFile)) {
     const envContent = fs.readFileSync(envFile, 'utf-8');
     const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
-    const filteredLines = envContent
+    const lines = envContent
       .split('\n')
       .filter(line => {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) return false;
         return allowedVars.some(v => trimmed.startsWith(`${v}=`));
       });
+    envVars.push(...lines);
+  }
 
-    if (filteredLines.length > 0) {
-      fs.writeFileSync(path.join(envDir, 'env'), filteredLines.join('\n') + '\n');
-      mounts.push({
-        hostPath: envDir,
-        containerPath: '/workspace/env-dir',
-        readonly: true
-      });
+  // Add OpenAI config if provider is openai or if OPENAI_API_KEY exists
+  const llmProvider = group.containerConfig?.llm?.provider || DEFAULT_LLM_PROVIDER;
+  if (llmProvider === 'openai' || OPENAI_API_KEY) {
+    if (OPENAI_API_KEY) {
+      envVars.push(`OPENAI_API_KEY=${OPENAI_API_KEY}`);
     }
+    if (OPENAI_BASE_URL) {
+      envVars.push(`OPENAI_BASE_URL=${OPENAI_BASE_URL}`);
+    }
+    // Add model override if specified in group config
+    const openaiModel = group.containerConfig?.llm?.openaiModel || OPENAI_DEFAULT_MODEL;
+    envVars.push(`OPENAI_DEFAULT_MODEL=${openaiModel}`);
+  }
+
+  if (envVars.length > 0) {
+    fs.writeFileSync(path.join(envDir, 'env'), envVars.join('\n') + '\n');
+    mounts.push({
+      hostPath: envDir,
+      containerPath: '/workspace/env-dir',
+      readonly: true
+    });
   }
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
@@ -182,6 +205,14 @@ export async function runContainerAgent(
   const groupDir = path.join(GROUPS_DIR, group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
+  // Merge LLM config from group with input
+  const llmConfig: LLMConfig = group.containerConfig?.llm || {
+    provider: DEFAULT_LLM_PROVIDER,
+    openaiModel: OPENAI_DEFAULT_MODEL,
+    openaiBaseUrl: OPENAI_BASE_URL
+  };
+  const inputWithLlm = { ...input, llm: llmConfig };
+
   const mounts = buildVolumeMounts(group, input.isMain);
   const containerArgs = buildContainerArgs(mounts);
 
@@ -210,7 +241,7 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    container.stdin.write(JSON.stringify(input));
+    container.stdin.write(JSON.stringify(inputWithLlm));
     container.stdin.end();
 
     container.stdout.on('data', (data) => {
@@ -293,8 +324,9 @@ export async function runContainerAgent(
       } else {
         logLines.push(
           `=== Input Summary ===`,
-          `Prompt length: ${input.prompt.length} chars`,
-          `Session ID: ${input.sessionId || 'new'}`,
+          `Prompt length: ${inputWithLlm.prompt.length} chars`,
+          `Session ID: ${inputWithLlm.sessionId || 'new'}`,
+          `LLM Provider: ${inputWithLlm.llm?.provider || DEFAULT_LLM_PROVIDER}`,
           ``,
           `=== Mounts ===`,
           mounts.map(m => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`).join('\n'),

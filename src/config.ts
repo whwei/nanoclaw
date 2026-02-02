@@ -1,4 +1,5 @@
 import path from 'path';
+import type { LLMProvider } from './types.js';
 
 export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
 export const POLL_INTERVAL = 2000;
@@ -19,6 +20,12 @@ export const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || 'nanoclaw-agent:la
 export const CONTAINER_TIMEOUT = parseInt(process.env.CONTAINER_TIMEOUT || '300000', 10);
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760', 10); // 10MB default
 export const IPC_POLL_INTERVAL = 1000;
+
+// LLM Provider configuration (default to Claude for backward compatibility)
+export const DEFAULT_LLM_PROVIDER: LLMProvider = (process.env.DEFAULT_LLM_PROVIDER as LLMProvider) || 'claude';
+export const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+export const OPENAI_DEFAULT_MODEL = process.env.OPENAI_DEFAULT_MODEL || 'gpt-4o';
+export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL; // For custom endpoints
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

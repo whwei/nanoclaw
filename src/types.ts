@@ -27,10 +27,22 @@ export interface AllowedRoot {
   description?: string;
 }
 
+export type LLMProvider = 'claude' | 'openai';
+
+export interface LLMConfig {
+  provider: LLMProvider;
+  // OpenAI-specific settings
+  openaiModel?: string;  // Default: 'gpt-4o'
+  openaiBaseUrl?: string; // For custom endpoints (optional)
+  // Claude-specific settings
+  claudeModel?: string;  // Default: uses agent SDK default
+}
+
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number;  // Default: 300000 (5 minutes)
   env?: Record<string, string>;
+  llm?: LLMConfig;
 }
 
 export interface RegisteredGroup {
